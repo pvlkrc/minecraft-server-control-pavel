@@ -58,8 +58,11 @@ overwrite them on start (other keys survive a restart, tested).
   from `API_TAG` in `.env`, default `latest`)
 - `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build`:
   same, but build the api image locally from this folder
-- Panel: http://127.0.0.1:8000, login from `.env` (`PANEL_USER`,
-  `PANEL_PASSWORD`). API docs: http://127.0.0.1:8000/docs
+- Panel: http://<host>:8000, login from `.env` (`PANEL_USER`,
+  `PANEL_PASSWORD`). API docs: http://<host>:8000/docs
+- Minecraft version is pinned (`VERSION: ${MC_VERSION:-26.3}`). Before
+  changing it: back up `data/`, check game rule names / command output formats
+  (see "Minecraft 26.x specifics").
 - `docker compose logs -f api`: API log, includes every RCON command
 - `uv sync`: local `.venv` for the editor. Running the API on the host
   (`uv run fastapi dev ...`) cannot reach RCON any more, because RCON is not
@@ -77,7 +80,9 @@ tags). Pull requests are built and tested, never pushed.
 
 - RCON is never published from Docker. Only the `api` container reaches it, as
   `minecraft:25575`. Docker bypasses ufw for published ports.
-- The panel is published on `127.0.0.1` by default (`PANEL_BIND`). Every route
+- The panel is published on `0.0.0.0` by default (`PANEL_BIND`, user's choice),
+  over plain HTTP: use a strong `PANEL_PASSWORD`, prefer HTTPS / SSH tunnel
+  on public servers. Every route
   except `GET /api/health` needs login.
 - Never put user input into an RCON command without validation:
   - player names: `PlayerName` type, `NAME_RE.fullmatch` (3–16 chars,

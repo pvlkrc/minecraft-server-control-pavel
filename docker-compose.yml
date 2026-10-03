@@ -10,6 +10,9 @@ services:
       # network (the api) can reach it as minecraft:25575.
     environment:
       EULA: "TRUE"
+      # Pinned Minecraft version. The panel's commands and game rule names are
+      # checked against it. Change on purpose (MC_VERSION in .env) after a backup.
+      VERSION: ${MC_VERSION:-26.3}
       MEMORY: "4096M"
       DIFFICULTY: "3"
       SPAWN_PROTECTION: "6"
@@ -40,8 +43,9 @@ services:
       # server.properties (allowed keys). Game changes go via RCON.
       - "./data:/data"
     ports:
-      # Default: only this computer. Set PANEL_BIND=0.0.0.0 in .env for LAN access.
-      - "${PANEL_BIND:-127.0.0.1}:${PANEL_PORT:-8000}:8000"
+      # Default: reachable from everywhere (plain HTTP + Basic login). Set
+      # PANEL_BIND=127.0.0.1 in .env to allow only this computer / SSH tunnel.
+      - "${PANEL_BIND:-0.0.0.0}:${PANEL_PORT:-8000}:8000"
     networks:
       - default
       - docker-api
