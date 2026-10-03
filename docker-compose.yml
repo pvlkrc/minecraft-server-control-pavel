@@ -1,5 +1,5 @@
 services:
-  mc:
+  minecraft:
     image: itzg/minecraft-server:latest
     tty: true
     stdin_open: true
@@ -10,5 +10,7 @@ services:
       MEMORY: "4096M"
       DIFFICULTY: "3"
       SPAWN_PROTECTION: "6"
+      RCON_PASSWORD: ${RCON_PASSWORD}
+      RCON_PORT: ${RCON_PORT}
     volumes:
       - "./data:/data"
