@@ -1,0 +1,23 @@
+version = 1
+revision = 5
+requires-python = ">=3.14"
+
+[[package]]
+name = "aio-mc-rcon"
+version = "3.5.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/d3/2f/5cbe6fbaeff920592645b059835314be8539f2d4f39cc094cbfd605a8ded/aio_mc_rcon-3.5.0.tar.gz", hash = "sha256:36f2aaeeea37eb427840d25b0f50b7335753223851392aeba8ffbc615b7cf19d", size = 3829, upload-time = "2026-09-18T15:55:44.108Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/12/cb/163d778d2cfd001728955e97fa39bd670cb917c5ac0276b512849c0eb7b0/aio_mc_rcon-3.5.0-py3-none-any.whl", hash = "sha256:66892c92c396f517cb5bc98e36ac8efdd5a6d2e794b00311a2909a8a7c561c74", size = 4893, upload-time = "2026-09-18T15:55:43.005Z" },
+]
+
+[[package]]
+name = "minecraft-server-control-pavel"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "aio-mc-rcon" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "aio-mc-rcon", specifier = ">=3.5.0" }]

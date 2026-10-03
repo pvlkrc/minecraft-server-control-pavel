@@ -1,0 +1,19 @@
+[project]
+name = "minecraft-server-control-pavel"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "pavel.kracmar", email = "pavel.kracmar@icloud.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "aio-mc-rcon>=3.5.0",
+]
+
+[project.scripts]
+minecraft-server-control-pavel = "minecraft_server_control_pavel:main"
+
+[build-system]
+requires = ["uv_build>=0.12.23,<0.13.0"]
+build-backend = "uv_build"
