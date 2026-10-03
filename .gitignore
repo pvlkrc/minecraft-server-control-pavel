@@ -1,5 +1,4 @@
-data/
+/data/
 .env
-src/
 .venv
 __pycache__
