@@ -5,15 +5,23 @@ import secrets
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from pydantic import AfterValidator, BaseModel, Field
+import httpx
+from pydantic import AfterValidator, BaseModel, Field, model_validator
 
-from . import restart
+from . import docker_stats, restart
 from .config import settings
 from .rcon import rcon, rcon_many
-from .server_files import read_json_list, read_properties, tail_log
+from .server_files import (
+    read_json_list,
+    read_properties,
+    read_spawn,
+    tail_log,
+    write_properties,
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
 
@@ -179,6 +187,14 @@ User = Annotated[str, Depends(require_user)]
 
 app = FastAPI(title="Minecraft control panel")
 api = APIRouter(prefix="/api", dependencies=[Depends(require_user)])
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    # Like FastAPI's default, but without echoing the input: it may be NaN,
+    # which cannot be written as JSON and would turn the 422 into a 500.
+    errors = [{k: v for k, v in e.items() if k in ("loc", "msg", "type")} for e in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": errors})
 
 
 @app.get("/api/health")
@@ -511,6 +527,211 @@ async def op(body: NameBody, user: User) -> CommandResult:
 @api.delete("/ops/{name}")
 async def deop(name: PlayerName, user: User) -> CommandResult:
     return await run(f"deop {name}", user)
+
+
+# Player tools --------------------------------------------------------------
+
+Dimension = Literal["minecraft:overworld", "minecraft:the_nether", "minecraft:the_end"]
+WORLD_LIMIT = 29_999_984
+
+
+def coordinate(low: float, high: float) -> Any:
+    return Field(None, ge=low, le=high, allow_inf_nan=False)
+
+
+class TellBody(BaseModel):
+    message: Message
+
+
+class TeleportBody(BaseModel):
+    target: Literal["player", "spawn", "coords"]
+    player: PlayerName | None = None
+    x: float | None = coordinate(-WORLD_LIMIT, WORLD_LIMIT)
+    y: float | None = coordinate(-64, 320)
+    z: float | None = coordinate(-WORLD_LIMIT, WORLD_LIMIT)
+    dimension: Dimension = "minecraft:overworld"
+
+    @model_validator(mode="after")
+    def check_target(self) -> "TeleportBody":
+        if self.target == "player" and self.player is None:
+            raise ValueError("player is required")
+        if self.target == "coords" and None in (self.x, self.y, self.z):
+            raise ValueError("x, y and z are required")
+        return self
+
+
+# Allowlist: item id -> (label, max count per give)
+ITEMS: dict[str, tuple[str, int]] = {
+    "stone_sword": ("Stone sword", 1),
+    "stone_pickaxe": ("Stone pickaxe", 1),
+    "stone_axe": ("Stone axe", 1),
+    "stone_shovel": ("Stone shovel", 1),
+    "iron_sword": ("Iron sword", 1),
+    "iron_pickaxe": ("Iron pickaxe", 1),
+    "iron_axe": ("Iron axe", 1),
+    "iron_shovel": ("Iron shovel", 1),
+    "shield": ("Shield", 1),
+    "bow": ("Bow", 1),
+    "arrow": ("Arrow", 64),
+    "iron_helmet": ("Iron helmet", 1),
+    "iron_chestplate": ("Iron chestplate", 1),
+    "iron_leggings": ("Iron leggings", 1),
+    "iron_boots": ("Iron boots", 1),
+    "bread": ("Bread", 64),
+    "cooked_beef": ("Steak", 64),
+    "baked_potato": ("Baked potato", 64),
+    "golden_apple": ("Golden apple", 16),
+    "oak_log": ("Oak log", 64),
+    "oak_planks": ("Oak planks", 64),
+    "cobblestone": ("Cobblestone", 64),
+    "torch": ("Torch", 64),
+    "crafting_table": ("Crafting table", 1),
+    "furnace": ("Furnace", 1),
+    "chest": ("Chest", 4),
+    "white_bed": ("Bed", 1),
+    "water_bucket": ("Water bucket", 1),
+    "iron_ingot": ("Iron ingot", 64),
+    "diamond": ("Diamond", 64),
+    "ender_pearl": ("Ender pearl", 16),
+    "experience_bottle": ("Bottle o' Enchanting", 64),
+    "firework_rocket": ("Firework rocket", 64),
+    "elytra": ("Elytra", 1),
+}
+
+KITS: dict[str, tuple[str, list[tuple[str, int]]]] = {
+    "starter": ("Starter kit", [
+        ("stone_sword", 1), ("stone_pickaxe", 1), ("stone_axe", 1), ("stone_shovel", 1),
+        ("bread", 16), ("torch", 32), ("oak_log", 16), ("crafting_table", 1), ("white_bed", 1),
+    ]),
+    "iron": ("Iron kit", [
+        ("iron_helmet", 1), ("iron_chestplate", 1), ("iron_leggings", 1), ("iron_boots", 1),
+        ("iron_sword", 1), ("iron_pickaxe", 1), ("shield", 1), ("cooked_beef", 32),
+    ]),
+    "builder": ("Builder kit", [
+        ("oak_planks", 64), ("cobblestone", 64), ("torch", 64), ("chest", 2),
+        ("crafting_table", 1), ("furnace", 1), ("water_bucket", 1),
+    ]),
+}
+
+
+class GiveBody(BaseModel):
+    item: str
+    count: int = Field(1, ge=1, le=64)
+
+
+class KitBody(BaseModel):
+    kit: str
+
+
+def fmt(value: float) -> str:
+    return f"{value:.2f}"
+
+
+@api.post("/players/{name}/tell")
+async def tell(name: PlayerName, body: TellBody, user: User) -> CommandResult:
+    return await run(f"tell {name} {body.message}", user)
+
+
+@api.post("/players/{name}/teleport")
+async def teleport(name: PlayerName, body: TeleportBody, user: User) -> CommandResult:
+    if body.target == "player":
+        return await run(f"tp {name} {body.player}", user)
+    if body.target == "spawn":
+        spawn = read_spawn()
+        if spawn is None:
+            raise HTTPException(500, "World spawn not found in level.dat")
+        # +0.5: middle of the block
+        x, y, z = spawn["x"] + 0.5, spawn["y"], spawn["z"] + 0.5
+        return await run(f"execute in {spawn['dimension']} run tp {name} {fmt(x)} {fmt(y)} {fmt(z)}", user)
+    assert body.x is not None and body.y is not None and body.z is not None
+    cmd = f"execute in {body.dimension} run tp {name} {fmt(body.x)} {fmt(body.y)} {fmt(body.z)}"
+    return await run(cmd, user)
+
+
+@api.get("/items")
+async def items() -> dict[str, object]:
+    return {
+        "items": [{"id": k, "label": v[0], "max": v[1]} for k, v in ITEMS.items()],
+        "kits": [
+            {"id": k, "label": label, "items": [f"{n}× {ITEMS[i][0]}" for i, n in content]}
+            for k, (label, content) in KITS.items()
+        ],
+    }
+
+
+@api.post("/players/{name}/give")
+async def give(name: PlayerName, body: GiveBody, user: User) -> CommandResult:
+    if body.item not in ITEMS:
+        raise HTTPException(422, "Item is not allowed")
+    label, max_count = ITEMS[body.item]
+    if body.count > max_count:
+        raise HTTPException(422, f"{label}: at most {max_count}")
+    return await run(f"give {name} minecraft:{body.item} {body.count}", user)
+
+
+@api.post("/players/{name}/kit")
+async def give_kit(name: PlayerName, body: KitBody, user: User) -> CommandResult:
+    if body.kit not in KITS:
+        raise HTTPException(422, "Unknown kit")
+    label, content = KITS[body.kit]
+    responses = await rcon_many(
+        [f"give {name} minecraft:{item} {count}" for item, count in content], user
+    )
+    if any("No player was found" in r for r in responses):
+        raise HTTPException(404, f"{name} is not online")
+    return CommandResult(response=f"Gave {label} to {name}")
+
+
+# Server settings -------------------------------------------------------------
+
+
+class PropertiesBody(BaseModel):
+    """Editable server.properties keys. difficulty and spawn-protection are not
+    here: docker-compose.yml sets them, so the image would overwrite them."""
+
+    motd: Annotated[str, Field(max_length=100), AfterValidator(clean_text)] | None = None
+    max_players: int | None = Field(None, ge=1, le=1000)
+    view_distance: int | None = Field(None, ge=3, le=32)
+    simulation_distance: int | None = Field(None, ge=3, le=32)
+    gamemode: Literal["survival", "creative", "adventure", "spectator"] | None = None
+    force_gamemode: bool | None = None
+    allow_flight: bool | None = None
+    player_idle_timeout: int | None = Field(None, ge=0, le=1440)
+    pause_when_empty_seconds: int | None = Field(None, ge=0, le=86400)
+
+
+@api.put("/server/properties")
+async def update_properties(body: PropertiesBody, user: User) -> CommandResult:
+    changes = body.model_dump(exclude_none=True)
+    if not changes:
+        raise HTTPException(422, "Nothing to change")
+    updates = {
+        key.replace("_", "-"): ("true" if v else "false") if isinstance(v, bool) else str(v)
+        for key, v in changes.items()
+    }
+    write_properties(updates)
+    logging.getLogger("properties").info("user=%s changed %s", user, updates)
+    return CommandResult(response="Saved. Restart the server to apply the changes.")
+
+
+@api.get("/seed")
+async def seed(user: User) -> dict[str, str | None]:
+    found = re.search(r"\[(-?\d+)\]", await rcon("seed", user))
+    return {"seed": found.group(1) if found else None}
+
+
+@api.get("/spawn")
+async def spawn() -> dict[str, object] | None:
+    return read_spawn()
+
+
+@api.get("/system")
+async def system() -> list[dict[str, object]]:
+    try:
+        return await docker_stats.container_stats()
+    except (httpx.HTTPError, KeyError, ValueError) as e:
+        logging.getLogger("system").warning("docker stats failed: %r", e)
+        raise HTTPException(502, "Docker stats not available") from e
 
 
 app.include_router(api)

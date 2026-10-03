@@ -19,7 +19,10 @@ services:
       - "./data:/data"
 
   api:
-    build: .
+    # Built by GitHub Actions (.github/workflows/api-image.yml).
+    # Update: docker compose pull api && docker compose up -d
+    # Local build instead: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+    image: ${API_IMAGE:-ghcr.io/pvlkrc/minecraft-server-control-pavel}:${API_TAG:-latest}
     restart: unless-stopped
     depends_on:
       minecraft:
@@ -31,9 +34,32 @@ services:
       PANEL_USER: ${PANEL_USER:-admin}
       PANEL_PASSWORD: ${PANEL_PASSWORD:?set PANEL_PASSWORD in .env}
       DATA_DIR: /data
+      DOCKER_URL: http://docker-proxy:2375
     volumes:
-      # Read-only: the api reads whitelist/bans/ops/logs, all changes go via RCON.
-      - "./data:/data:ro"
+      # The api reads whitelist/bans/ops/logs/level.dat. It writes only
+      # server.properties (allowed keys). Game changes go via RCON.
+      - "./data:/data"
     ports:
       # Default: only this computer. Set PANEL_BIND=0.0.0.0 in .env for LAN access.
       - "${PANEL_BIND:-127.0.0.1}:${PANEL_PORT:-8000}:8000"
+    networks:
+      - default
+      - docker-api
+
+  # Read-only Docker API for CPU / RAM / uptime. Only GET on containers is
+  # allowed; the api never sees the real Docker socket. Not published, and
+  # only reachable from the api (separate internal network).
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:v0.5.0
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      POST: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - docker-api
+
+networks:
+  docker-api:
+    internal: true

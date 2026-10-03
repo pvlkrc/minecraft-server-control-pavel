@@ -16,7 +16,9 @@ RUN uv sync --locked --no-dev --no-install-project
 COPY src ./src
 RUN uv sync --locked --no-dev
 
-RUN useradd --create-home --uid 1001 app
+# uid 1000 = same as the minecraft container, so the api can write
+# server.properties in the shared ./data folder.
+RUN useradd --create-home --uid 1000 app
 USER app
 
 EXPOSE 8000

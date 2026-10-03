@@ -10,7 +10,8 @@ project for Python, FastAPI, async, Docker, PostgreSQL, Redis and CI.
 - `pydantic-settings` reads config from environment variables / `.env`
 - uv for dependencies (`pyproject.toml` + `uv.lock`, both committed)
 - Docker Compose services: `minecraft` (`itzg/minecraft-server`), `api`
-  (built from `Dockerfile`)
+  (built from `Dockerfile`), `docker-proxy` (`tecnativa/docker-socket-proxy`,
+  read-only Docker API for CPU / RAM / uptime)
 - Planned: PostgreSQL + SQLAlchemy 2.0 + Alembic, Redis, worker, ruff, mypy,
   pytest, CI (GitHub or Gitea Actions, not decided)
 
@@ -24,8 +25,13 @@ project for Python, FastAPI, async, Docker, PostgreSQL, Redis and CI.
 - `restart.py`: restart countdown (chat warnings, then `stop`; Docker restarts
   the container because of `restart: unless-stopped`). State lives in the
   process, so a scheduled restart is lost when the api restarts.
-- `server_files.py`: read-only access to the server's `whitelist.json`,
-  `banned-players.json`, `ops.json`, `server.properties`, `logs/latest.log`
+- `server_files.py`: reads the server's `whitelist.json`,
+  `banned-players.json`, `ops.json`, `server.properties`, `logs/latest.log`,
+  world spawn from `level.dat`; writes allowed keys of `server.properties`
+  (Java-style escaping, same file inode)
+- `nbt.py`: minimal NBT reader (for `level.dat`)
+- `docker_stats.py`: container stats via `docker-proxy` (finds its own Compose
+  project from its container labels)
 - `main.py`: validation types, HTTP Basic login, all endpoints under `/api`,
   `GET /` serves the web page
 - `static/index.html`: the web page (plain HTML/CSS/JS, no build step),
@@ -39,18 +45,33 @@ Minecraft 26.x specifics (verified against the server JAR language file):
   parse with `snbt_numbers`.
 
 Lists are read from the server's JSON files (more reliable than parsing RCON
-text). All changes go through RCON. The `api` container mounts `./data`
-read-only.
+text). All game changes go through RCON. The `api` container mounts `./data`
+read-write (only for `server.properties`) and runs as uid 1000, the same as
+the minecraft container. `difficulty` and `spawn-protection` are not editable
+in the panel because docker-compose.yml sets them and the image would
+overwrite them on start (other keys survive a restart, tested).
 
 ## Commands
 
-- `docker compose up -d --build`: build and start everything
+- `docker compose pull && docker compose up -d`: start everything with the
+  api image from GHCR (`ghcr.io/pvlkrc/minecraft-server-control-pavel`, tag
+  from `API_TAG` in `.env`, default `latest`)
+- `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build`:
+  same, but build the api image locally from this folder
 - Panel: http://127.0.0.1:8000, login from `.env` (`PANEL_USER`,
   `PANEL_PASSWORD`). API docs: http://127.0.0.1:8000/docs
 - `docker compose logs -f api`: API log, includes every RCON command
 - `uv sync`: local `.venv` for the editor. Running the API on the host
   (`uv run fastapi dev ...`) cannot reach RCON any more, because RCON is not
   published.
+
+## CI
+
+`.github/workflows/api-image.yml` (GitHub Actions): on push to `main` (only
+when api files change), on `v*` tags and on pull requests. It builds the
+image, runs a smoke test (container healthy, login required), then builds
+amd64 + arm64 and pushes to GHCR (`latest`, `sha-<short>`, semver from
+tags). Pull requests are built and tested, never pushed.
 
 ## Security rules
 
@@ -68,7 +89,13 @@ read-only.
   - fixed choices (time, weather, difficulty, gamemode, restart delay):
     `Literal` types; game rules: allowlist dicts
 - Allowlist of RCON commands: each endpoint sends one fixed command. Never add
-  a generic "send any command" endpoint.
+  a generic "send any command" endpoint. Items for `give` and kits are an
+  allowlist (`ITEMS`, `KITS`) with max counts; coordinates are range-checked
+  floats (no NaN/inf).
+- The api never gets the Docker socket. `docker-proxy` allows only GET on
+  containers (POST is 403) and sits on an internal network only the api can
+  reach.
+- Validation errors (422) do not echo the input (custom handler in `main.py`).
 - Secrets only in `.env`, which is in `.gitignore` and `.dockerignore`.
 - Only one RCON command at a time (the server has a bug with parallel
   commands). `rcon()` holds an `asyncio.Lock`, so the api runs with one
@@ -84,8 +111,9 @@ read-only.
 2. Docker Compose with Minecraft and RCON. Done.
 3. Endpoint with online players. Done.
 4. Whitelist, bans, IP bans, ops, kick, gamemode, player details, game
-   rules, TPS, restart with countdown, world controls, 2D player map, web
-   panel. Done.
+   rules, TPS, restart with countdown, world controls, 2D player map, private
+   message, teleport, give items / kits, skin avatars (mc-heads.net), container
+   CPU / RAM / uptime, server.properties editor, seed / spawn, web panel. Done.
 5. PostgreSQL + Alembic, audit log of all commands (now only in the api log).
 6. Worker that polls players every minute and saves history; stats endpoints.
 7. Scheduled world backups (`save-off` / `save-all` / `save-on`).

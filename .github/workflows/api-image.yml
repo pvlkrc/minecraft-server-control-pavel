@@ -1,0 +1,121 @@
+name: API image
+
+# Builds the api Docker image and publishes it to GitHub Container Registry:
+#   ghcr.io/<owner>/<repo>:latest      newest build from main
+#   ghcr.io/<owner>/<repo>:sha-<short> every build from main
+#   ghcr.io/<owner>/<repo>:1.2.3       git tag v1.2.3 (also :1.2)
+# Pull requests only build and test the image, nothing is pushed.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - "src/**"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "README.md"
+      - ".github/workflows/api-image.yml"
+  pull_request:
+    paths:
+      - "src/**"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/api-image.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: api-image-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Image name (lowercase)
+        id: name
+        run: echo "image=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      # 1) Build for this runner only and check that the app starts.
+      - name: Build test image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: api:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test (container becomes healthy)
+        run: |
+          docker run -d --name api-test --health-interval=2s \
+            -e RCON_PASSWORD=ci -e PANEL_PASSWORD=ci -e DATA_DIR=/tmp/data \
+            api:test
+          for _ in $(seq 1 30); do
+            status=$(docker inspect --format '{{.State.Health.Status}}' api-test)
+            echo "health: $status"
+            [ "$status" = healthy ] && exit 0
+            sleep 2
+          done
+          docker logs api-test
+          exit 1
+
+      - name: Login check (401 without password, 200 with)
+        run: |
+          docker exec api-test python -c "
+          import urllib.request as u, urllib.error as e, base64
+          try:
+              u.urlopen('http://127.0.0.1:8000/api/bans'); raise SystemExit('no auth needed!')
+          except e.HTTPError as err:
+              assert err.code == 401, err.code
+          r = u.Request('http://127.0.0.1:8000/', headers={'Authorization': 'Basic ' + base64.b64encode(b'admin:ci').decode()})
+          assert u.urlopen(r).status == 200
+          print('ok')
+          "
+
+      # 2) Build for amd64 + arm64 (e.g. Raspberry Pi) and push.
+      - name: Tags and labels
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.name.outputs.image }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=ref,event=pr
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -339,12 +339,14 @@ source = { editable = "." }
 dependencies = [
     { name = "aio-mc-rcon" },
     { name = "fastapi", extra = ["standard-no-fastapi-cloud-cli"] },
+    { name = "httpx" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "aio-mc-rcon", specifier = ">=3.5.0" },
     { name = "fastapi", extras = ["standard-no-fastapi-cloud-cli"], specifier = ">=0.142.2" },
+    { name = "httpx", specifier = ">=0.28.1" },
 ]
 
 [[package]]

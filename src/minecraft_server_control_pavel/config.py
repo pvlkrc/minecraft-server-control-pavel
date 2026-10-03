@@ -19,5 +19,8 @@ class Settings(BaseSettings):
     # Mounted read-only into the api container.
     data_dir: Path = Path("data")
 
+    # Read-only Docker API (docker-socket-proxy service) for CPU / RAM / uptime.
+    docker_url: str = "http://docker-proxy:2375"
+
 
 settings = Settings()

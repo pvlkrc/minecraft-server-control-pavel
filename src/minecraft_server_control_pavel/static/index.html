@@ -84,6 +84,20 @@
   .rule { display: flex; align-items: center; gap: 8px; }
   .rule.int { grid-column: 1 / -1; }
   .rule.int label { flex: 1; }
+  .who { display: inline-flex; align-items: center; gap: 8px; }
+  .avatar { width: 24px; height: 24px; border-radius: 4px; image-rendering: pixelated; background: var(--border); flex: none; }
+  .tools { display: grid; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
+  .tools .row { margin: 0; }
+  .tools .label { width: 70px; }
+  .tools input[type="number"] { flex: 0 0 80px; }
+  .settings { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px 16px; margin-bottom: 10px; }
+  .settings label { display: grid; gap: 3px; font-size: 12px; color: var(--muted); }
+  .settings label.check { display: flex; align-items: center; gap: 6px; color: var(--text); font-size: 14px; }
+  .settings input:not([type="checkbox"]), .settings select { width: 100%; }
+  .bar { height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; margin-top: 3px; }
+  .bar > div { height: 100%; background: var(--accent); }
+  .containers td { font-size: 13px; }
+  code { font-family: ui-monospace, monospace; font-size: 13px; }
   pre {
     margin: 0; background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px;
     padding: 10px; height: 320px; overflow: auto; font-size: 12px; white-space: pre-wrap;
@@ -146,6 +160,16 @@
     </div>
     <div class="small muted" id="perf-status" style="margin:6px 0 4px"></div>
 
+    <h3>Containers</h3>
+    <table class="containers"><tbody id="system"></tbody></table>
+
+    <h3>World</h3>
+    <div class="row small">
+      <span class="muted">Seed:</span> <code id="seed">–</code>
+      <button id="seed-copy" class="small">Copy</button>
+      <span class="muted" style="margin-left:12px">Spawn:</span> <code id="spawn">–</code>
+    </div>
+
     <h3>Restart</h3>
     <div class="row">
       <select id="restart-delay">
@@ -185,6 +209,29 @@
     <form id="say-form">
       <input id="say-text" maxlength="256" placeholder="Message to all players" required>
       <button class="primary">Broadcast</button>
+    </form>
+  </section>
+
+  <section>
+    <h2>Server settings <small>server.properties</small></h2>
+    <form id="settings-form" style="display:block">
+      <div class="settings">
+        <label style="grid-column:1/-1">MOTD (server list message)<input id="set-motd" maxlength="100"></label>
+        <label>Max players<input id="set-max_players" type="number" min="1" max="1000"></label>
+        <label>View distance (chunks)<input id="set-view_distance" type="number" min="3" max="32"></label>
+        <label>Simulation distance (chunks)<input id="set-simulation_distance" type="number" min="3" max="32"></label>
+        <label>Idle kick (minutes, 0 = off)<input id="set-player_idle_timeout" type="number" min="0" max="1440"></label>
+        <label>Pause when empty (seconds, 0 = off)<input id="set-pause_when_empty_seconds" type="number" min="0" max="86400"></label>
+        <label>Default gamemode
+          <select id="set-gamemode"><option>survival</option><option>creative</option><option>adventure</option><option>spectator</option></select>
+        </label>
+        <label class="check"><input type="checkbox" id="set-force_gamemode"> Force gamemode on join</label>
+        <label class="check"><input type="checkbox" id="set-allow_flight"> Allow flight</label>
+      </div>
+      <div class="row">
+        <button class="primary">Save</button>
+        <span class="small muted">Changes apply after a restart. Difficulty and spawn protection are set in docker-compose.yml.</span>
+      </div>
     </form>
   </section>
 
@@ -321,6 +368,32 @@ function fillTable(tbody, rows, emptyText) {
 
 const enc = encodeURIComponent;
 
+function onSubmit(formId, handler) {
+  $(formId).addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    await handler(ev.target);
+  });
+}
+
+// Skin heads come from mc-heads.net (the browser loads them directly).
+function who(name, extra) {
+  const img = el("img", { className: "avatar", src: `https://mc-heads.net/avatar/${enc(name)}/48`, alt: "", loading: "lazy" });
+  img.onerror = () => { img.style.visibility = "hidden"; };
+  return el("span", { className: "who" }, img, extra || name);
+}
+
+function fmtBytes(b) {
+  if (b == null) return "?";
+  const gb = b / 1024 ** 3;
+  return gb >= 1 ? gb.toFixed(2) + " GB" : (b / 1024 ** 2).toFixed(0) + " MB";
+}
+
+function fmtUptime(s) {
+  if (s == null) return "?";
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m ${s % 60}s`;
+}
+
 function fmtDuration(s) {
   const m = Math.floor(s / 60);
   return m ? `${m}:${String(s % 60).padStart(2, "0")}` : `${s} s`;
@@ -387,9 +460,16 @@ $("restart-cancel").onclick = () => act("DELETE", "/restart", null, loadRestart)
 // --- players ---------------------------------------------------------------
 
 const openDetails = new Set();
+const playerRows = new Map();   // name -> { info: element }
+let renderedPlayers = "";
+let itemData = { items: [], kits: [] };
+let onlineNames = [];
 
-async function showDetails(name, cell) {
-  cell.textContent = "Loading…";
+async function loadItems() {
+  try { itemData = await api("GET", "/items"); } catch (e) { /* tools show empty lists */ }
+}
+
+async function refreshInfo(name, box) {
   try {
     const d = await api("GET", `/players/${enc(name)}`);
     const dim = (d.dimension || "").replace("minecraft:", "").replace("the_", "");
@@ -401,11 +481,145 @@ async function showDetails(name, cell) {
       ["Level", d.level ?? "?"],
       ["Gamemode", d.gamemode || "?"],
     ];
-    cell.replaceChildren(el("div", { className: "kv" },
-      ...items.map(([k, v]) => el("div", {}, el("span", { textContent: k + ": " }), String(v)))));
+    box.replaceChildren(...items.map(([k, v]) => el("div", {}, el("span", { textContent: k + ": " }), String(v))));
   } catch (e) {
-    cell.textContent = e.message;
+    box.textContent = e.message;
   }
+}
+
+function numberInput(placeholder, min, max) {
+  return el("input", { type: "number", placeholder, min, max, step: "any" });
+}
+
+function playerTools(name) {
+  const p = `/players/${enc(name)}`;
+
+  // Message
+  const msg = el("input", { placeholder: `Private message to ${name}`, maxLength: 256 });
+  const msgForm = el("form", { className: "row" }, el("span", { className: "label muted", textContent: "Message" }), msg,
+    el("button", { textContent: "Send" }));
+  msgForm.onsubmit = async (ev) => {
+    ev.preventDefault();
+    if (!msg.value.trim()) return;
+    await act("POST", p + "/tell", { message: msg.value }, loadLogs);
+    msg.value = "";
+  };
+
+  // Teleport
+  const mode = el("select", {},
+    el("option", { value: "player", textContent: "to player" }),
+    el("option", { value: "spawn", textContent: "to spawn" }),
+    el("option", { value: "coords", textContent: "to coordinates" }));
+  const target = el("select", {}, ...onlineNames.filter((n) => n !== name).map((n) => el("option", { value: n, textContent: n })));
+  const x = numberInput("x", -29999984, 29999984), y = numberInput("y", -64, 320), z = numberInput("z", -29999984, 29999984);
+  const dim = el("select", {},
+    el("option", { value: "minecraft:overworld", textContent: "Overworld" }),
+    el("option", { value: "minecraft:the_nether", textContent: "Nether" }),
+    el("option", { value: "minecraft:the_end", textContent: "The End" }));
+  const coords = [x, y, z, dim];
+  const updateMode = () => {
+    target.hidden = mode.value !== "player";
+    for (const c of coords) c.hidden = mode.value !== "coords";
+  };
+  mode.onchange = updateMode;
+  updateMode();
+  const tpForm = el("form", { className: "row" }, el("span", { className: "label muted", textContent: "Teleport" }),
+    mode, target, ...coords, el("button", { textContent: "Teleport" }));
+  tpForm.onsubmit = (ev) => {
+    ev.preventDefault();
+    const body = { target: mode.value };
+    if (mode.value === "player") {
+      if (!target.value) return toast("No other player online", true);
+      body.player = target.value;
+    }
+    if (mode.value === "coords") {
+      if ([x, y, z].some((i) => i.value === "")) return toast("Fill in x, y and z", true);
+      Object.assign(body, { x: Number(x.value), y: Number(y.value), z: Number(z.value), dimension: dim.value });
+    }
+    act("POST", p + "/teleport", body, () => refreshAll.info(name));
+  };
+
+  // Give
+  const item = el("select", {}, ...itemData.items.map((i) => el("option", { value: i.id, textContent: i.label })));
+  const count = el("input", { type: "number", min: 1, value: 1 });
+  const syncMax = () => {
+    const it = itemData.items.find((i) => i.id === item.value);
+    count.max = it ? it.max : 64;
+    if (Number(count.value) > Number(count.max)) count.value = count.max;
+  };
+  item.onchange = syncMax;
+  syncMax();
+  const giveForm = el("form", { className: "row" }, el("span", { className: "label muted", textContent: "Give" }),
+    item, count, el("button", { textContent: "Give" }));
+  giveForm.onsubmit = (ev) => {
+    ev.preventDefault();
+    act("POST", p + "/give", { item: item.value, count: Number(count.value) });
+  };
+
+  // Kit
+  const kit = el("select", {}, ...itemData.kits.map((k) => el("option", { value: k.id, textContent: k.label, title: k.items.join(", ") })));
+  const kitInfo = el("span", { className: "small muted" });
+  const syncKit = () => { const k = itemData.kits.find((k) => k.id === kit.value); kitInfo.textContent = k ? k.items.join(", ") : ""; };
+  kit.onchange = syncKit;
+  syncKit();
+  const kitForm = el("form", { className: "row" }, el("span", { className: "label muted", textContent: "Kit" }),
+    kit, el("button", { textContent: "Give kit" }), kitInfo);
+  kitForm.onsubmit = (ev) => {
+    ev.preventDefault();
+    const k = itemData.kits.find((k) => k.id === kit.value);
+    if (k && confirm(`Give ${k.label} to ${name}?`)) act("POST", p + "/kit", { kit: kit.value });
+  };
+
+  return el("div", { className: "tools" }, msgForm, tpForm, giveForm, kitForm);
+}
+
+function renderPlayers(names) {
+  playerRows.clear();
+  const rows = [];
+  for (const name of names) {
+    const mode = el("select", {},
+      ...["survival", "creative", "adventure", "spectator"].map((m) =>
+        el("option", { value: m, textContent: m, selected: m === defaultGamemode })));
+    mode.onchange = () => act("PUT", `/players/${enc(name)}/gamemode`, { mode: mode.value });
+
+    const info = el("div", { className: "kv", textContent: "Loading…" });
+    const detailCell = el("td", { colSpan: 2 }, info);
+    const detailRow = el("tr", { className: "details", hidden: !openDetails.has(name) }, detailCell);
+    let toolsBuilt = false;
+    const open = () => {
+      detailRow.hidden = false;
+      if (!toolsBuilt) { detailCell.append(playerTools(name)); toolsBuilt = true; }
+      refreshInfo(name, info);
+    };
+    if (openDetails.has(name)) open();
+    playerRows.set(name, { info });
+
+    const nameBtn = button(name, () => {
+      if (openDetails.has(name)) { openDetails.delete(name); detailRow.hidden = true; }
+      else { openDetails.add(name); open(); }
+    }, "link");
+    nameBtn.title = "Details and player tools";
+
+    rows.push(el("tr", {},
+      el("td", {}, who(name, nameBtn)),
+      el("td", { className: "actions" },
+        mode,
+        button("Op", () => act("POST", "/ops", { name }, loadOps)),
+        button("Kick", () => {
+          const reason = prompt(`Kick ${name}? Reason (optional):`, "");
+          if (reason !== null) act("POST", `/players/${enc(name)}/kick`, { reason: reason || null }, loadPlayers);
+        }),
+        button("Ban", () => {
+          const reason = prompt(`Ban ${name}? Reason (optional):`, "");
+          if (reason !== null) act("POST", "/bans", { name, reason: reason || null }, loadPlayers, loadBans);
+        }, "danger"),
+        button("Ban IP", () => {
+          const reason = prompt(`Ban the IP address of ${name}? Reason (optional):`, "");
+          if (reason !== null) act("POST", "/ip-bans", { target: name, reason: reason || null }, loadPlayers, loadIpBans);
+        }, "danger"))));
+    rows.push(detailRow);
+  }
+  fillTable($("players"), rows, "Nobody is online.");
 }
 
 async function loadPlayers() {
@@ -415,53 +629,100 @@ async function loadPlayers() {
     $("status-text").textContent = "online";
     $("player-count").textContent = `${d.online} / ${d.max} players`;
     $("online-small").textContent = `${d.online} / ${d.max}`;
+    onlineNames = d.players;
     for (const n of [...openDetails]) if (!d.players.includes(n)) openDetails.delete(n);
 
-    const rows = [];
-    for (const name of d.players) {
-      const mode = el("select", {},
-        ...["survival", "creative", "adventure", "spectator"].map((m) =>
-          el("option", { value: m, textContent: m, selected: m === defaultGamemode })));
-      mode.onchange = () => act("PUT", `/players/${enc(name)}/gamemode`, { mode: mode.value });
-
-      const detailCell = el("td", { colSpan: 2 });
-      const detailRow = el("tr", { className: "details", hidden: !openDetails.has(name) }, detailCell);
-      if (openDetails.has(name)) showDetails(name, detailCell);
-
-      const nameBtn = button(name, () => {
-        if (openDetails.has(name)) { openDetails.delete(name); detailRow.hidden = true; }
-        else { openDetails.add(name); detailRow.hidden = false; showDetails(name, detailCell); }
-      }, "link");
-      nameBtn.title = "Show details";
-
-      rows.push(el("tr", {},
-        el("td", {}, nameBtn),
-        el("td", { className: "actions" },
-          mode,
-          button("Op", () => act("POST", "/ops", { name }, loadOps)),
-          button("Kick", () => {
-            const reason = prompt(`Kick ${name}? Reason (optional):`, "");
-            if (reason !== null) act("POST", `/players/${enc(name)}/kick`, { reason: reason || null }, loadPlayers);
-          }),
-          button("Ban", () => {
-            const reason = prompt(`Ban ${name}? Reason (optional):`, "");
-            if (reason !== null) act("POST", "/bans", { name, reason: reason || null }, loadPlayers, loadBans);
-          }, "danger"),
-          button("Ban IP", () => {
-            const reason = prompt(`Ban the IP address of ${name}? Reason (optional):`, "");
-            if (reason !== null) act("POST", "/ip-bans", { target: name, reason: reason || null }, loadPlayers, loadIpBans);
-          }, "danger"))));
-      rows.push(detailRow);
+    // Rebuild only when the list changes, so typing in the tools is not lost.
+    const key = d.players.join("\n");
+    if (key !== renderedPlayers) {
+      renderedPlayers = key;
+      renderPlayers(d.players);
+    } else {
+      for (const n of openDetails) {
+        const row = playerRows.get(n);
+        if (row) refreshInfo(n, row.info);
+      }
     }
-    fillTable($("players"), rows, "Nobody is online.");
   } catch (e) {
     $("status-dot").className = "dot off";
     $("status-text").textContent = "offline (" + e.message + ")";
     $("player-count").textContent = "";
     $("online-small").textContent = "";
+    renderedPlayers = null;
     fillTable($("players"), [], "Server not reachable.");
   }
 }
+
+// --- server: containers, seed, settings -------------------------------------
+
+async function loadSystem() {
+  try {
+    const list = await api("GET", "/system");
+    fillTable($("system"), list.map((c) => {
+      const pct = c.memory_limit_bytes ? Math.min(100, c.memory_bytes / c.memory_limit_bytes * 100) : 0;
+      return el("tr", {},
+        el("td", {}, el("div", { textContent: c.service }), el("div", { className: "small muted", textContent: `${c.status || "?"} · up ${fmtUptime(c.uptime_seconds)}` })),
+        el("td", { textContent: c.cpu_percent != null ? `CPU ${c.cpu_percent} %` : "CPU ?" }),
+        el("td", { style: "min-width:120px" },
+          el("div", { textContent: `${fmtBytes(c.memory_bytes)} / ${fmtBytes(c.memory_limit_bytes)}` }),
+          el("div", { className: "bar" }, el("div", { style: `width:${pct.toFixed(0)}%` }))));
+    }), "No containers.");
+  } catch (e) {
+    fillTable($("system"), [], e.message);
+  }
+}
+
+async function loadSeed() {
+  try { $("seed").textContent = (await api("GET", "/seed")).seed ?? "?"; } catch (e) { $("seed").textContent = "?"; }
+  try {
+    const sp = await api("GET", "/spawn");
+    $("spawn").textContent = sp ? `${sp.x}, ${sp.y}, ${sp.z}` : "?";
+  } catch (e) { $("spawn").textContent = "?"; }
+}
+$("seed-copy").onclick = async () => {
+  try { await navigator.clipboard.writeText($("seed").textContent); toast("Seed copied"); }
+  catch (e) { toast("Copy not allowed by the browser", true); }
+};
+
+const SETTINGS = {
+  motd: "motd", max_players: "max-players", view_distance: "view-distance",
+  simulation_distance: "simulation-distance", player_idle_timeout: "player-idle-timeout",
+  pause_when_empty_seconds: "pause-when-empty-seconds", gamemode: "gamemode",
+  force_gamemode: "force-gamemode", allow_flight: "allow-flight",
+};
+let settingsLoaded = {};
+
+async function loadSettings() {
+  try {
+    const p = await api("GET", "/server");
+    settingsLoaded = {};
+    for (const [field, key] of Object.entries(SETTINGS)) {
+      const input = $("set-" + field);
+      if (input.type === "checkbox") input.checked = p[key] === "true";
+      else input.value = p[key] ?? "";
+      settingsLoaded[field] = input.type === "checkbox" ? input.checked : input.value;
+    }
+  } catch (e) { toast(e.message, true); }
+}
+
+onSubmit("settings-form", async () => {
+  const body = {};
+  for (const field of Object.keys(SETTINGS)) {
+    const input = $("set-" + field);
+    const value = input.type === "checkbox" ? input.checked : input.value;
+    if (value === settingsLoaded[field]) continue;          // send only changes
+    body[field] = input.type === "number" ? Number(value) : value;
+  }
+  if (!Object.keys(body).length) return toast("Nothing changed");
+  try {
+    const r = await api("PUT", "/server/properties", body);
+    toast(r.response);
+    await loadSettings();
+    if (confirm("Saved. Restart the server now (10 second countdown) to apply?")) {
+      await act("POST", "/restart", { delay: 10 }, loadRestart);
+    }
+  } catch (e) { toast(e.message, true); }
+});
 
 // --- game rules --------------------------------------------------------------
 
@@ -493,7 +754,7 @@ async function loadWhitelist() {
     const d = await api("GET", "/whitelist");
     $("wl-enabled").checked = d.enabled;
     fillTable($("whitelist"), d.players.map((p) => el("tr", {},
-      el("td", { textContent: p.name }),
+      el("td", {}, who(p.name)),
       el("td", { className: "actions" },
         button("Remove", () => act("DELETE", `/whitelist/${enc(p.name)}`, null, loadWhitelist), "danger")))),
       "Whitelist is empty.");
@@ -508,7 +769,7 @@ async function loadBans() {
   try {
     const bans = await api("GET", "/bans");
     fillTable($("bans"), bans.map((b) => el("tr", {},
-      el("td", {}, el("div", { textContent: b.name }), el("div", { className: "muted small", textContent: banMeta(b) })),
+      el("td", {}, who(b.name, el("div", {}, el("div", { textContent: b.name }), el("div", { className: "muted small", textContent: banMeta(b) })))),
       el("td", { className: "actions" },
         button("Unban", () => act("DELETE", `/bans/${enc(b.name)}`, null, loadBans))))),
       "No banned players.");
@@ -530,7 +791,7 @@ async function loadOps() {
   try {
     const ops = await api("GET", "/ops");
     fillTable($("ops"), ops.map((o) => el("tr", {},
-      el("td", {}, el("div", { textContent: o.name }), el("div", { className: "muted small", textContent: "level " + o.level })),
+      el("td", {}, who(o.name, el("div", {}, el("div", { textContent: o.name }), el("div", { className: "muted small", textContent: "level " + o.level })))),
       el("td", { className: "actions" },
         button("Remove", () => act("DELETE", `/ops/${enc(o.name)}`, null, loadOps), "danger")))),
       "No operators.");
@@ -549,12 +810,6 @@ async function loadLogs() {
 
 // --- forms and buttons ----------------------------------------------------
 
-function onSubmit(formId, handler) {
-  $(formId).addEventListener("submit", async (ev) => {
-    ev.preventDefault();
-    await handler(ev.target);
-  });
-}
 
 onSubmit("wl-form", async (f) => {
   await act("POST", "/whitelist", { name: $("wl-name").value }, loadWhitelist);
@@ -729,14 +984,15 @@ canvas.addEventListener("pointerup", () => { map.drag = null; canvas.classList.r
 // --- start ----------------------------------------------------------------
 
 async function refreshAll() {
-  await loadServer();
-  await Promise.all([loadPlayers(), loadPerformance(), loadRestart(), loadGamerules(),
-    loadWhitelist(), loadBans(), loadIpBans(), loadOps(), loadLogs()]);
+  await Promise.all([loadServer(), loadItems()]);
+  await Promise.all([loadPlayers(), loadPerformance(), loadRestart(), loadGamerules(), loadSystem(),
+    loadSeed(), loadSettings(), loadWhitelist(), loadBans(), loadIpBans(), loadOps(), loadLogs()]);
 }
+refreshAll.info = (name) => { const r = playerRows.get(name); if (r) refreshInfo(name, r.info); };
 
 refreshAll();
 setInterval(() => { loadPlayers(); loadRestart(); }, 5000);
-setInterval(loadPerformance, 10000);
+setInterval(() => { loadPerformance(); loadSystem(); }, 10000);
 setInterval(() => { if ($("log-follow").checked) loadLogs(); }, 5000);
 setInterval(() => Promise.all([loadWhitelist(), loadBans(), loadIpBans(), loadOps(), loadServer()]), 20000);
 setInterval(loadGamerules, 60000);
