@@ -1,17 +1,39 @@
 services:
   minecraft:
     image: itzg/minecraft-server:latest
+    restart: unless-stopped
     tty: true
     stdin_open: true
     ports:
       - "25565:25565"
-      - "127.0.0.1:25575:25575"
+      # RCON (25575) is NOT published. Only containers in this Compose
+      # network (the api) can reach it as minecraft:25575.
     environment:
       EULA: "TRUE"
       MEMORY: "4096M"
       DIFFICULTY: "3"
       SPAWN_PROTECTION: "6"
-      RCON_PASSWORD: ${RCON_PASSWORD}
-      RCON_PORT: ${RCON_PORT}
+      RCON_PASSWORD: ${RCON_PASSWORD:?set RCON_PASSWORD in .env}
+      RCON_PORT: ${RCON_PORT:-25575}
     volumes:
       - "./data:/data"
+
+  api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      minecraft:
+        condition: service_healthy
+    environment:
+      RCON_HOST: minecraft
+      RCON_PORT: ${RCON_PORT:-25575}
+      RCON_PASSWORD: ${RCON_PASSWORD:?set RCON_PASSWORD in .env}
+      PANEL_USER: ${PANEL_USER:-admin}
+      PANEL_PASSWORD: ${PANEL_PASSWORD:?set PANEL_PASSWORD in .env}
+      DATA_DIR: /data
+    volumes:
+      # Read-only: the api reads whitelist/bans/ops/logs, all changes go via RCON.
+      - "./data:/data:ro"
+    ports:
+      # Default: only this computer. Set PANEL_BIND=0.0.0.0 in .env for LAN access.
+      - "${PANEL_BIND:-127.0.0.1}:${PANEL_PORT:-8000}:8000"

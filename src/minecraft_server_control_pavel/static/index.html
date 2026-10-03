@@ -1,0 +1,745 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Minecraft Control Panel</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --text: #1d2125; --muted: #6b7280;
+    --border: #e2e5e9; --accent: #3a7d2c; --accent-text: #ffffff;
+    --danger: #c0392b; --warn: #b7791f; --ok: #2f9e44; --code-bg: #f0f1f3;
+    --map-bg: #eef1ec; --map-grid: #d6dbd2; --map-axis: #9aa596;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #15171a; --card: #1f2226; --text: #e6e8eb; --muted: #9aa1a9;
+      --border: #30353b; --accent: #5cb046; --accent-text: #0d1a09;
+      --danger: #e5675a; --warn: #e0a84a; --ok: #5cc26b; --code-bg: #16181b;
+      --map-bg: #171b17; --map-grid: #2a312a; --map-axis: #4b574b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px;
+    padding: 14px 20px; background: var(--card); border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 18px; margin: 0; }
+  header .spacer { flex: 1; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+  .pill.warn { color: var(--warn); font-weight: 600; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .dot.on { background: var(--ok); } .dot.off { background: var(--danger); }
+  .good { color: var(--ok); } .mid { color: var(--warn); } .bad { color: var(--danger); }
+  main {
+    display: grid; gap: 16px; padding: 16px;
+    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+    max-width: 1400px; margin: 0 auto;
+  }
+  section {
+    background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px; min-width: 0;
+  }
+  section.wide { grid-column: 1 / -1; }
+  h2 {
+    font-size: 15px; margin: 0 0 10px; display: flex; align-items: center;
+    justify-content: space-between; gap: 8px;
+  }
+  h3 { font-size: 13px; margin: 14px 0 8px; color: var(--muted); font-weight: 600; }
+  h2 small { font-weight: normal; color: var(--muted); }
+  form, .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 10px; }
+  input, select, button {
+    font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 10px;
+  }
+  input { flex: 1 1 120px; min-width: 0; }
+  input[type="number"] { flex: 0 0 90px; }
+  input[type="checkbox"] { flex: none; }
+  button { cursor: pointer; background: var(--card); white-space: nowrap; }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button.danger { color: var(--danger); }
+  button.link { border: none; background: none; padding: 0; color: inherit; font-weight: 600; text-align: left; }
+  button.link:hover { text-decoration: underline; }
+  button:disabled { opacity: .5; cursor: default; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 6px 4px; border-top: 1px solid var(--border); vertical-align: middle; }
+  td.actions { text-align: right; white-space: nowrap; }
+  td.actions > * { margin-left: 4px; }
+  tr.details td { border-top: none; padding-top: 0; }
+  .muted { color: var(--muted); }
+  .empty { color: var(--muted); padding: 6px 0; }
+  .small { font-size: 12px; }
+  .label { width: 80px; color: var(--muted); }
+  .stats { display: flex; flex-wrap: wrap; gap: 8px 24px; }
+  .stat b { display: block; font-size: 22px; line-height: 1.2; }
+  .stat span { color: var(--muted); font-size: 12px; }
+  .kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 2px 16px; font-size: 13px; }
+  .kv span { color: var(--muted); }
+  .rules { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px 16px; }
+  .rule { display: flex; align-items: center; gap: 8px; }
+  .rule.int { grid-column: 1 / -1; }
+  .rule.int label { flex: 1; }
+  pre {
+    margin: 0; background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px; height: 320px; overflow: auto; font-size: 12px; white-space: pre-wrap;
+    word-break: break-word;
+  }
+  label.switch { display: inline-flex; align-items: center; gap: 6px; font-weight: normal; cursor: pointer; }
+  #toast {
+    position: fixed; right: 16px; bottom: 16px; max-width: min(420px, calc(100vw - 32px));
+    background: var(--card); border: 1px solid var(--border); border-left: 4px solid var(--ok);
+    border-radius: 8px; padding: 10px 14px; box-shadow: 0 6px 24px rgba(0,0,0,.18);
+    opacity: 0; transform: translateY(8px); transition: .2s; pointer-events: none; z-index: 20;
+  }
+  #toast.show { opacity: 1; transform: none; }
+  #toast.error { border-left-color: var(--danger); }
+
+  /* map */
+  #map-dialog {
+    width: min(1100px, calc(100vw - 24px)); height: min(820px, calc(100vh - 24px));
+    padding: 0; border: 1px solid var(--border); border-radius: 12px;
+    background: var(--card); color: var(--text);
+  }
+  #map-dialog::backdrop { background: rgba(0,0,0,.5); }
+  .map-wrap { display: flex; flex-direction: column; height: 100%; }
+  .map-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+  .map-bar h2 { margin: 0; }
+  .map-bar .spacer { flex: 1; }
+  #map-canvas { flex: 1; width: 100%; min-height: 0; display: block; cursor: grab; touch-action: none; }
+  #map-canvas.dragging { cursor: grabbing; }
+  .map-foot { padding: 6px 14px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--border); }
+
+  @media (max-width: 420px) {
+    main { padding: 16px 8px; grid-template-columns: 1fr; }
+    header { padding: 12px 16px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="motd">Minecraft Control Panel</h1>
+  <span class="pill"><span id="status-dot" class="dot"></span><span id="status-text">connecting…</span></span>
+  <span class="pill" id="player-count"></span>
+  <span class="pill" id="tps-pill"></span>
+  <span class="pill warn" id="restart-pill"></span>
+  <span class="spacer"></span>
+  <button id="map-open" class="primary">Player map</button>
+</header>
+
+<main>
+  <section>
+    <h2>Online players <small id="online-small"></small></h2>
+    <table><tbody id="players"></tbody></table>
+  </section>
+
+  <section>
+    <h2>Server <small id="server-props"></small></h2>
+    <div class="stats">
+      <div class="stat"><b id="perf-tps">–</b><span>TPS</span></div>
+      <div class="stat"><b id="perf-mspt">–</b><span>ms per tick</span></div>
+      <div class="stat"><b id="perf-p95">–</b><span>ms P95</span></div>
+    </div>
+    <div class="small muted" id="perf-status" style="margin:6px 0 4px"></div>
+
+    <h3>Restart</h3>
+    <div class="row">
+      <select id="restart-delay">
+        <option value="10">in 10 seconds</option>
+        <option value="60">in 1 minute</option>
+        <option value="300" selected>in 5 minutes</option>
+        <option value="600">in 10 minutes</option>
+      </select>
+      <button id="restart-start" class="danger">Restart server</button>
+      <button id="restart-cancel" hidden>Cancel restart</button>
+    </div>
+    <div class="small muted">Players get chat warnings during the countdown. Then the server stops and Docker starts it again.</div>
+  </section>
+
+  <section>
+    <h2>World</h2>
+    <div class="row"><span class="label">Time</span>
+      <button data-put="/time" data-value="day">Day</button>
+      <button data-put="/time" data-value="noon">Noon</button>
+      <button data-put="/time" data-value="night">Night</button>
+      <button data-put="/time" data-value="midnight">Midnight</button>
+    </div>
+    <div class="row"><span class="label">Weather</span>
+      <button data-put="/weather" data-value="clear">Clear</button>
+      <button data-put="/weather" data-value="rain">Rain</button>
+      <button data-put="/weather" data-value="thunder">Thunder</button>
+    </div>
+    <div class="row"><span class="label">Difficulty</span>
+      <select id="difficulty">
+        <option>peaceful</option><option>easy</option><option>normal</option><option>hard</option>
+      </select>
+      <button id="difficulty-set">Set</button>
+    </div>
+    <div class="row"><span class="label">World</span>
+      <button id="save">Save world</button>
+    </div>
+    <form id="say-form">
+      <input id="say-text" maxlength="256" placeholder="Message to all players" required>
+      <button class="primary">Broadcast</button>
+    </form>
+  </section>
+
+  <section>
+    <h2>Game rules</h2>
+    <div class="rules" id="gamerules"><span class="empty">Loading…</span></div>
+  </section>
+
+  <section>
+    <h2>Whitelist
+      <label class="switch small"><input type="checkbox" id="wl-enabled"> enabled</label>
+    </h2>
+    <form id="wl-form">
+      <input id="wl-name" placeholder="Player name" maxlength="16" pattern="[A-Za-z0-9_]{3,16}" required>
+      <button class="primary">Add</button>
+    </form>
+    <table><tbody id="whitelist"></tbody></table>
+  </section>
+
+  <section>
+    <h2>Bans</h2>
+    <form id="ban-form">
+      <input id="ban-name" placeholder="Player name" maxlength="16" pattern="[A-Za-z0-9_]{3,16}" required>
+      <input id="ban-reason" placeholder="Reason (optional)" maxlength="200">
+      <button class="primary">Ban</button>
+    </form>
+    <table><tbody id="bans"></tbody></table>
+  </section>
+
+  <section>
+    <h2>IP bans</h2>
+    <form id="ipban-form">
+      <input id="ipban-target" placeholder="IP address or online player" maxlength="45" required>
+      <input id="ipban-reason" placeholder="Reason (optional)" maxlength="200">
+      <button class="primary">Ban IP</button>
+    </form>
+    <table><tbody id="ipbans"></tbody></table>
+  </section>
+
+  <section>
+    <h2>Operators</h2>
+    <form id="op-form">
+      <input id="op-name" placeholder="Player name" maxlength="16" pattern="[A-Za-z0-9_]{3,16}" required>
+      <button class="primary">Make operator</button>
+    </form>
+    <table><tbody id="ops"></tbody></table>
+  </section>
+
+  <section class="wide">
+    <h2>Server log
+      <label class="switch small"><input type="checkbox" id="log-follow" checked> auto refresh</label>
+    </h2>
+    <pre id="log"></pre>
+  </section>
+</main>
+
+<dialog id="map-dialog">
+  <div class="map-wrap">
+    <div class="map-bar">
+      <h2>Player map</h2>
+      <select id="map-dim">
+        <option value="minecraft:overworld">Overworld</option>
+        <option value="minecraft:the_nether">Nether</option>
+        <option value="minecraft:the_end">The End</option>
+      </select>
+      <button id="map-fit">Fit players</button>
+      <span class="small muted" id="map-info"></span>
+      <span class="spacer"></span>
+      <button id="map-close">Close</button>
+    </div>
+    <canvas id="map-canvas"></canvas>
+    <div class="map-foot">Top = north (−Z), right = east (+X). Scroll to zoom, drag to move. Updates every 2 seconds.</div>
+  </div>
+</dialog>
+
+<div id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+function el(tag, props = {}, ...children) {
+  const node = document.createElement(tag);
+  Object.assign(node, props);
+  for (const c of children) node.append(c);
+  return node;
+}
+
+let toastTimer;
+function toast(text, isError = false) {
+  const t = $("toast");
+  t.textContent = text;
+  t.className = "show" + (isError ? " error" : "");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (t.className = ""), 4000);
+}
+
+function errorText(data, status) {
+  const d = data && data.detail;
+  if (Array.isArray(d)) return d.map((x) => x.msg).join("; ");
+  if (d) return String(d);
+  return "HTTP " + status;
+}
+
+async function api(method, path, body) {
+  const res = await fetch("/api" + path, {
+    method,
+    headers: body ? { "Content-Type": "application/json" } : {},
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  let data = null;
+  try { data = await res.json(); } catch {}
+  if (!res.ok) throw new Error(errorText(data, res.status));
+  return data;
+}
+
+// Run a command, show the server answer, then refresh the given views.
+async function act(method, path, body, ...refresh) {
+  try {
+    const r = await api(method, path, body);
+    toast((r && r.response) || "Done");
+  } catch (e) {
+    toast(e.message, true);
+  }
+  await Promise.all(refresh.map((f) => f()));
+}
+
+function button(text, onClick, cls = "") {
+  return el("button", { textContent: text, className: cls, onclick: onClick });
+}
+
+function fillTable(tbody, rows, emptyText) {
+  tbody.replaceChildren(...(rows.length ? rows : [el("tr", {}, el("td", { className: "empty", textContent: emptyText }))]));
+}
+
+const enc = encodeURIComponent;
+
+function fmtDuration(s) {
+  const m = Math.floor(s / 60);
+  return m ? `${m}:${String(s % 60).padStart(2, "0")}` : `${s} s`;
+}
+
+// --- server / performance / restart ---------------------------------------
+
+let defaultGamemode = "survival";
+
+async function loadServer() {
+  try {
+    const p = await api("GET", "/server");
+    $("motd").textContent = p.motd || "Minecraft Control Panel";
+    document.title = (p.motd || "Minecraft") + " · Control Panel";
+    defaultGamemode = p.gamemode || defaultGamemode;
+    if (p.difficulty) $("difficulty").value = p.difficulty;
+    $("server-props").textContent = [
+      p.gamemode, p["online-mode"] === "false" ? "offline mode" : null,
+    ].filter(Boolean).join(" · ");
+  } catch (e) { /* shown by players view */ }
+}
+
+async function loadPerformance() {
+  try {
+    const p = await api("GET", "/performance");
+    const cls = p.tps == null ? "" : p.tps >= 19 ? "good" : p.tps >= 15 ? "mid" : "bad";
+    $("perf-tps").textContent = p.tps ?? "–";
+    $("perf-tps").className = cls;
+    $("perf-mspt").textContent = p.mspt ?? "–";
+    $("perf-p95").textContent = p.p95_mspt ?? "–";
+    $("perf-status").textContent = p.status;
+    $("tps-pill").textContent = p.tps != null ? `TPS ${p.tps}` : "";
+    $("tps-pill").className = "pill " + cls;
+  } catch (e) {
+    for (const id of ["perf-tps", "perf-mspt", "perf-p95"]) $(id).textContent = "–";
+    $("perf-status").textContent = "";
+    $("tps-pill").textContent = "";
+  }
+}
+
+let restartLeft = null;
+function showRestart() {
+  const active = restartLeft != null;
+  $("restart-pill").textContent = active ? `Restart in ${fmtDuration(restartLeft)}` : "";
+  $("restart-start").hidden = active;
+  $("restart-delay").hidden = active;
+  $("restart-cancel").hidden = !active;
+}
+async function loadRestart() {
+  try {
+    restartLeft = (await api("GET", "/restart")).seconds_left;
+  } catch (e) { restartLeft = null; }
+  showRestart();
+}
+setInterval(() => { if (restartLeft) { restartLeft--; showRestart(); } }, 1000);
+
+$("restart-start").onclick = () => {
+  const delay = Number($("restart-delay").value);
+  const label = $("restart-delay").selectedOptions[0].textContent;
+  if (confirm(`Restart the server ${label}?`)) act("POST", "/restart", { delay }, loadRestart);
+};
+$("restart-cancel").onclick = () => act("DELETE", "/restart", null, loadRestart);
+
+// --- players ---------------------------------------------------------------
+
+const openDetails = new Set();
+
+async function showDetails(name, cell) {
+  cell.textContent = "Loading…";
+  try {
+    const d = await api("GET", `/players/${enc(name)}`);
+    const dim = (d.dimension || "").replace("minecraft:", "").replace("the_", "");
+    const items = [
+      ["Position", d.position ? d.position.join(", ") : "?"],
+      ["Dimension", dim || "?"],
+      ["Health", d.health != null ? `${d.health} / 20` : "?"],
+      ["Food", d.food != null ? `${d.food} / 20` : "?"],
+      ["Level", d.level ?? "?"],
+      ["Gamemode", d.gamemode || "?"],
+    ];
+    cell.replaceChildren(el("div", { className: "kv" },
+      ...items.map(([k, v]) => el("div", {}, el("span", { textContent: k + ": " }), String(v)))));
+  } catch (e) {
+    cell.textContent = e.message;
+  }
+}
+
+async function loadPlayers() {
+  try {
+    const d = await api("GET", "/players");
+    $("status-dot").className = "dot on";
+    $("status-text").textContent = "online";
+    $("player-count").textContent = `${d.online} / ${d.max} players`;
+    $("online-small").textContent = `${d.online} / ${d.max}`;
+    for (const n of [...openDetails]) if (!d.players.includes(n)) openDetails.delete(n);
+
+    const rows = [];
+    for (const name of d.players) {
+      const mode = el("select", {},
+        ...["survival", "creative", "adventure", "spectator"].map((m) =>
+          el("option", { value: m, textContent: m, selected: m === defaultGamemode })));
+      mode.onchange = () => act("PUT", `/players/${enc(name)}/gamemode`, { mode: mode.value });
+
+      const detailCell = el("td", { colSpan: 2 });
+      const detailRow = el("tr", { className: "details", hidden: !openDetails.has(name) }, detailCell);
+      if (openDetails.has(name)) showDetails(name, detailCell);
+
+      const nameBtn = button(name, () => {
+        if (openDetails.has(name)) { openDetails.delete(name); detailRow.hidden = true; }
+        else { openDetails.add(name); detailRow.hidden = false; showDetails(name, detailCell); }
+      }, "link");
+      nameBtn.title = "Show details";
+
+      rows.push(el("tr", {},
+        el("td", {}, nameBtn),
+        el("td", { className: "actions" },
+          mode,
+          button("Op", () => act("POST", "/ops", { name }, loadOps)),
+          button("Kick", () => {
+            const reason = prompt(`Kick ${name}? Reason (optional):`, "");
+            if (reason !== null) act("POST", `/players/${enc(name)}/kick`, { reason: reason || null }, loadPlayers);
+          }),
+          button("Ban", () => {
+            const reason = prompt(`Ban ${name}? Reason (optional):`, "");
+            if (reason !== null) act("POST", "/bans", { name, reason: reason || null }, loadPlayers, loadBans);
+          }, "danger"),
+          button("Ban IP", () => {
+            const reason = prompt(`Ban the IP address of ${name}? Reason (optional):`, "");
+            if (reason !== null) act("POST", "/ip-bans", { target: name, reason: reason || null }, loadPlayers, loadIpBans);
+          }, "danger"))));
+      rows.push(detailRow);
+    }
+    fillTable($("players"), rows, "Nobody is online.");
+  } catch (e) {
+    $("status-dot").className = "dot off";
+    $("status-text").textContent = "offline (" + e.message + ")";
+    $("player-count").textContent = "";
+    $("online-small").textContent = "";
+    fillTable($("players"), [], "Server not reachable.");
+  }
+}
+
+// --- game rules --------------------------------------------------------------
+
+async function loadGamerules() {
+  try {
+    const rules = await api("GET", "/gamerules");
+    const box = $("gamerules");
+    const bools = rules.filter((r) => r.type === "bool").map((r) => {
+      const cb = el("input", { type: "checkbox", checked: !!r.value, disabled: r.value == null, id: "gr-" + r.name });
+      cb.onchange = () => act("PUT", `/gamerules/${r.name}`, { value: cb.checked }, loadGamerules);
+      return el("div", { className: "rule" }, cb,
+        el("label", { htmlFor: cb.id, textContent: r.label, title: r.name }));
+    });
+    const ints = rules.filter((r) => r.type === "int").map((r) => {
+      const inp = el("input", { type: "number", min: r.min, max: r.max, value: r.value ?? "", disabled: r.value == null });
+      const set = button("Set", () => act("PUT", `/gamerules/${r.name}`, { value: Number(inp.value) }, loadGamerules));
+      return el("div", { className: "rule int" }, el("label", { textContent: r.label, title: r.name }), inp, set);
+    });
+    box.replaceChildren(...bools, ...ints);
+  } catch (e) {
+    $("gamerules").replaceChildren(el("span", { className: "empty", textContent: "Server not reachable." }));
+  }
+}
+
+// --- lists -----------------------------------------------------------------
+
+async function loadWhitelist() {
+  try {
+    const d = await api("GET", "/whitelist");
+    $("wl-enabled").checked = d.enabled;
+    fillTable($("whitelist"), d.players.map((p) => el("tr", {},
+      el("td", { textContent: p.name }),
+      el("td", { className: "actions" },
+        button("Remove", () => act("DELETE", `/whitelist/${enc(p.name)}`, null, loadWhitelist), "danger")))),
+      "Whitelist is empty.");
+  } catch (e) { toast(e.message, true); }
+}
+
+function banMeta(b) {
+  return [b.reason, b.created && b.created.slice(0, 16), b.source && "by " + b.source].filter(Boolean).join(" · ");
+}
+
+async function loadBans() {
+  try {
+    const bans = await api("GET", "/bans");
+    fillTable($("bans"), bans.map((b) => el("tr", {},
+      el("td", {}, el("div", { textContent: b.name }), el("div", { className: "muted small", textContent: banMeta(b) })),
+      el("td", { className: "actions" },
+        button("Unban", () => act("DELETE", `/bans/${enc(b.name)}`, null, loadBans))))),
+      "No banned players.");
+  } catch (e) { toast(e.message, true); }
+}
+
+async function loadIpBans() {
+  try {
+    const bans = await api("GET", "/ip-bans");
+    fillTable($("ipbans"), bans.map((b) => el("tr", {},
+      el("td", {}, el("div", { textContent: b.ip }), el("div", { className: "muted small", textContent: banMeta(b) })),
+      el("td", { className: "actions" },
+        button("Unban", () => act("DELETE", `/ip-bans/${enc(b.ip)}`, null, loadIpBans))))),
+      "No banned IP addresses.");
+  } catch (e) { toast(e.message, true); }
+}
+
+async function loadOps() {
+  try {
+    const ops = await api("GET", "/ops");
+    fillTable($("ops"), ops.map((o) => el("tr", {},
+      el("td", {}, el("div", { textContent: o.name }), el("div", { className: "muted small", textContent: "level " + o.level })),
+      el("td", { className: "actions" },
+        button("Remove", () => act("DELETE", `/ops/${enc(o.name)}`, null, loadOps), "danger")))),
+      "No operators.");
+  } catch (e) { toast(e.message, true); }
+}
+
+async function loadLogs() {
+  try {
+    const lines = await api("GET", "/logs?lines=300");
+    const pre = $("log");
+    const atBottom = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40;
+    pre.textContent = lines.join("\n");
+    if (atBottom) pre.scrollTop = pre.scrollHeight;
+  } catch (e) { /* ignore, server view shows the state */ }
+}
+
+// --- forms and buttons ----------------------------------------------------
+
+function onSubmit(formId, handler) {
+  $(formId).addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    await handler(ev.target);
+  });
+}
+
+onSubmit("wl-form", async (f) => {
+  await act("POST", "/whitelist", { name: $("wl-name").value }, loadWhitelist);
+  f.reset();
+});
+onSubmit("ban-form", async (f) => {
+  await act("POST", "/bans", { name: $("ban-name").value, reason: $("ban-reason").value || null }, loadBans, loadPlayers);
+  f.reset();
+});
+onSubmit("ipban-form", async (f) => {
+  await act("POST", "/ip-bans", { target: $("ipban-target").value.trim(), reason: $("ipban-reason").value || null }, loadIpBans, loadPlayers);
+  f.reset();
+});
+onSubmit("op-form", async (f) => {
+  await act("POST", "/ops", { name: $("op-name").value }, loadOps);
+  f.reset();
+});
+onSubmit("say-form", async (f) => {
+  await act("POST", "/say", { message: $("say-text").value }, loadLogs);
+  f.reset();
+});
+
+$("wl-enabled").onchange = (ev) => act("PUT", "/whitelist/enabled", { enabled: ev.target.checked }, loadWhitelist, loadServer);
+$("difficulty-set").onclick = () => act("PUT", "/difficulty", { value: $("difficulty").value }, loadServer);
+$("save").onclick = () => act("POST", "/save", null);
+document.querySelectorAll("[data-put]").forEach((b) => {
+  b.onclick = () => act("PUT", b.dataset.put, { value: b.dataset.value }, loadLogs);
+});
+
+// --- player map --------------------------------------------------------------
+
+const map = { players: [], cx: 0, cz: 0, scale: 1, auto: true, timer: null, drag: null };
+const canvas = $("map-canvas");
+
+function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+function playerColor(name) {
+  let h = 0;
+  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  return `hsl(${h} 70% 50%)`;
+}
+
+function visiblePlayers() {
+  return map.players.filter((p) => p.dimension === $("map-dim").value);
+}
+
+function fitMap() {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  const ps = visiblePlayers();
+  if (!ps.length) { map.cx = 0; map.cz = 0; map.scale = Math.min(w, h) / 256; return; }
+  const xs = ps.map((p) => p.x), zs = ps.map((p) => p.z);
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minZ = Math.min(...zs), maxZ = Math.max(...zs);
+  map.cx = (minX + maxX) / 2;
+  map.cz = (minZ + maxZ) / 2;
+  const span = Math.max(64, (maxX - minX) * 1.4, (maxZ - minZ) * 1.4);
+  map.scale = Math.min(w, h) / span;
+}
+
+function drawMap() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+    canvas.width = Math.round(w * dpr);
+    canvas.height = Math.round(h * dpr);
+  }
+  if (map.auto) fitMap();
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = css("--map-bg");
+  ctx.fillRect(0, 0, w, h);
+
+  const sx = (x) => (x - map.cx) * map.scale + w / 2;
+  const sz = (z) => (z - map.cz) * map.scale + h / 2;
+
+  // Grid: pick a step so lines are at least ~70 px apart.
+  let step = 16;
+  while (step * map.scale < 70) step *= 2;
+  const x0 = Math.floor((map.cx - w / 2 / map.scale) / step) * step;
+  const z0 = Math.floor((map.cz - h / 2 / map.scale) / step) * step;
+  ctx.lineWidth = 1;
+  ctx.font = "11px system-ui, sans-serif";
+  ctx.fillStyle = css("--muted");
+  for (let x = x0; sx(x) <= w; x += step) {
+    ctx.strokeStyle = x === 0 ? css("--map-axis") : css("--map-grid");
+    ctx.beginPath(); ctx.moveTo(sx(x) + .5, 0); ctx.lineTo(sx(x) + .5, h); ctx.stroke();
+    ctx.fillText(String(x), sx(x) + 3, h - 6);
+  }
+  for (let z = z0; sz(z) <= h; z += step) {
+    ctx.strokeStyle = z === 0 ? css("--map-axis") : css("--map-grid");
+    ctx.beginPath(); ctx.moveTo(0, sz(z) + .5); ctx.lineTo(w, sz(z) + .5); ctx.stroke();
+    ctx.fillText(String(z), 4, sz(z) - 3);
+  }
+
+  // Origin and compass
+  ctx.strokeStyle = css("--map-axis");
+  ctx.beginPath(); ctx.arc(sx(0), sz(0), 5, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = css("--text");
+  ctx.font = "bold 13px system-ui, sans-serif";
+  ctx.fillText("N", w - 22, 22);
+  ctx.beginPath(); ctx.moveTo(w - 18, 28); ctx.lineTo(w - 22, 40); ctx.lineTo(w - 14, 40); ctx.closePath(); ctx.fill();
+
+  // Players
+  const ps = visiblePlayers();
+  for (const p of ps) {
+    const x = sx(p.x), y = sz(p.z);
+    ctx.fillStyle = playerColor(p.name);
+    ctx.strokeStyle = css("--card");
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x, y, 7, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.font = "bold 13px system-ui, sans-serif";
+    ctx.lineWidth = 3;
+    ctx.strokeText(p.name, x + 11, y + 4);
+    ctx.fillStyle = css("--text");
+    ctx.fillText(p.name, x + 11, y + 4);
+    ctx.font = "11px system-ui, sans-serif";
+    ctx.fillStyle = css("--muted");
+    ctx.fillText(`${Math.round(p.x)}, ${Math.round(p.y)}, ${Math.round(p.z)}`, x + 11, y + 18);
+  }
+
+  const others = map.players.length - ps.length;
+  $("map-info").textContent = `${ps.length} here` + (others ? ` · ${others} in other dimensions` : "") +
+    ` · grid ${step} blocks`;
+}
+
+async function loadMap() {
+  try {
+    map.players = await api("GET", "/map");
+  } catch (e) {
+    map.players = [];
+    $("map-info").textContent = e.message;
+  }
+  drawMap();
+}
+
+$("map-open").onclick = () => {
+  $("map-dialog").showModal();
+  map.auto = true;
+  loadMap();
+  map.timer = setInterval(loadMap, 2000);
+};
+$("map-close").onclick = () => $("map-dialog").close();
+$("map-dialog").addEventListener("close", () => clearInterval(map.timer));
+$("map-fit").onclick = () => { map.auto = true; drawMap(); };
+$("map-dim").onchange = () => { map.auto = true; drawMap(); };
+window.addEventListener("resize", () => { if ($("map-dialog").open) drawMap(); });
+
+canvas.addEventListener("wheel", (ev) => {
+  ev.preventDefault();
+  const rect = canvas.getBoundingClientRect();
+  const mx = ev.clientX - rect.left - rect.width / 2, mz = ev.clientY - rect.top - rect.height / 2;
+  const before = { x: map.cx + mx / map.scale, z: map.cz + mz / map.scale };
+  map.scale = Math.min(64, Math.max(0.005, map.scale * (ev.deltaY < 0 ? 1.2 : 1 / 1.2)));
+  map.cx = before.x - mx / map.scale;
+  map.cz = before.z - mz / map.scale;
+  map.auto = false;
+  drawMap();
+}, { passive: false });
+canvas.addEventListener("pointerdown", (ev) => {
+  map.drag = { x: ev.clientX, y: ev.clientY, cx: map.cx, cz: map.cz };
+  canvas.setPointerCapture(ev.pointerId);
+  canvas.classList.add("dragging");
+});
+canvas.addEventListener("pointermove", (ev) => {
+  if (!map.drag) return;
+  map.cx = map.drag.cx - (ev.clientX - map.drag.x) / map.scale;
+  map.cz = map.drag.cz - (ev.clientY - map.drag.y) / map.scale;
+  map.auto = false;
+  drawMap();
+});
+canvas.addEventListener("pointerup", () => { map.drag = null; canvas.classList.remove("dragging"); });
+
+// --- start ----------------------------------------------------------------
+
+async function refreshAll() {
+  await loadServer();
+  await Promise.all([loadPlayers(), loadPerformance(), loadRestart(), loadGamerules(),
+    loadWhitelist(), loadBans(), loadIpBans(), loadOps(), loadLogs()]);
+}
+
+refreshAll();
+setInterval(() => { loadPlayers(); loadRestart(); }, 5000);
+setInterval(loadPerformance, 10000);
+setInterval(() => { if ($("log-follow").checked) loadLogs(); }, 5000);
+setInterval(() => Promise.all([loadWhitelist(), loadBans(), loadIpBans(), loadOps(), loadServer()]), 20000);
+setInterval(loadGamerules, 60000);
+</script>
+</body>
+</html>
